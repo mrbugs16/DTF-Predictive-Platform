@@ -24,23 +24,21 @@ La gestión reactiva basada en análisis histórico descriptivo resulta insufici
 
 Un pipeline end-to-end que combina dos enfoques complementarios:
 
-1. **Modelos ML independientes** (Random Forest, XGBoost, SARIMA) entrenados sobre features de la serie temporal de ventas DTF.
+1. **Modelos ML independientes** (Random Forest, SARIMA) entrenados sobre features de la serie temporal de ventas DTF.
 2. **Modelo de transferencia estadística** que extrae patrones estacionales macro del dataset H&M (31.7M transacciones) y los calibra al volumen real de DTF Fashion.
 
-Ambos enfoques se combinan en un **ensemble con pesos optimizados** y se exponen mediante una API REST y un dashboard interactivo.
+Los modelos se exponen mediante una API REST y un dashboard interactivo.
 
 ### Resultados obtenidos
 
-| Modelo | MAE | MAPE | R² | Mejora vs Baseline |
-|--------|-----|------|----|--------------------|
-| Baseline Naive | 0.7812 | 81.2% | -0.2363 | — |
-| SARIMA(1,1,1)(1,1,1)[7] | — | — | — | — |
-| Random Forest | 0.6878 | 63.6% | 0.3117 | +12.0% |
-| **XGBoost** | **0.4165** | **32.8%** | **0.6418** | **+46.7%** |
-| Transferencia H&M | — | — | — | — |
-| Ensemble Optimizado | — | — | — | — |
+| Modelo | MAPE | Mejora vs Baseline |
+|--------|------|--------------------|
+| Baseline Naive | 53.04% | — |
+| SARIMA(1,1,1)(1,1,1)[7] | — | — |
+| **Random Forest** | **32.74%** | **+38.3%** |
+| Transferencia H&M | 15.48% (sobre serie H&M) | — |
 
-> **Nota:** Las métricas de SARIMA, Transferencia H&M y Ensemble se calculan al ejecutar `train_models.py` v2.0 con los datos reales. El modelo XGBoost supera el objetivo de mejora del 20–25% con un **+46.7%** de reducción en MAE.
+> **Nota:** Las métricas de SARIMA se calculan al ejecutar `train_models.py` con los datos reales. El modelo Random Forest supera el objetivo de mejora del 20% con un **+38.3%** de reducción en MAPE frente al baseline naive.
 
 ### Modelo de Transferencia H&M
 
@@ -90,6 +88,9 @@ Ambos enfoques se combinan en un **ensemble con pesos optimizados** y se exponen
 dtf-predictive-platform/
 ├── README.md
 ├── requirements.txt
+├── docker-compose.yml
+├── Dockerfile
+├── .env.example
 ├── .gitignore
 │
 ├── data/
@@ -150,43 +151,64 @@ dtf-predictive-platform/
 
 ### Prerrequisitos
 
-- Python 3.10+
-- pip
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (incluye Docker Engine y Docker Compose)
+- Git
 
-### Setup
-
-```bash
-# Clonar repositorio
-git clone https://github.com/FlowersLoop/dtf-predictive-platform.git
-cd dtf-predictive-platform
-
-# Crear entorno virtual
-python -m venv venv
-source venv/bin/activate        # Linux/Mac
-# venv\Scripts\activate         # Windows
-
-# Instalar dependencias
-pip install -r requirements.txt
-```
-
-### Ejecución rápida
+### Setup con Docker
 
 ```bash
-# 1. Ejecutar pipeline ETL (limpieza, transformación, calibración H&M)
-python etl/etl_pipeline.py
+# 1. Clonar repositorio
+git clone https://github.com/mrbugs16/DTF-Predictive-Platform.git
+cd DTF-Predictive-Platform
 
-# 2. Entrenar modelos (SARIMA, RF, XGBoost, Transfer H&M, Ensemble)
-python models/train_models.py
+# 2. Crear archivo de variables de entorno
+cp .env.example .env
+# Edita .env si necesitas cambiar contraseñas o puertos
 
-# 3. Levantar API
-cd api && uvicorn main:app --reload --port 8000
+# 3. Levantar todos los servicios (base de datos + API + dashboard)
+docker-compose up -d
 
-# 4. Levantar Dashboard
-streamlit run dashboard/app.py
-
-# 5. Abrir documentación interactiva de la API
-# Navegar a http://localhost:8000/docs
+# 4. Verificar que los contenedores estén corriendo
+docker-compose ps
 ```
+
+Los servicios estarán disponibles en:
+
+| Servicio | URL |
+|----------|-----|
+| Dashboard | http://localhost:8501 |
+| API REST | http://localhost:8000 |
+| Docs interactivos (Swagger) | http://localhost:8000/docs |
+
+### Comandos útiles
+
+```bash
+# Ver logs en tiempo real
+docker-compose logs -f
+
+# Ver logs de un servicio específico
+docker-compose logs -f api
+docker-compose logs -f dashboard
+
+# Reconstruir imágenes después de cambios en el código
+docker-compose up -d --build
+
+# Detener todos los servicios (conserva los datos de la BD)
+docker-compose down
+
+# Detener y borrar todos los datos de la BD (reset completo)
+docker-compose down -v
+```
+
+### Entrenamiento de modelos
+
+El entrenamiento inicial carga los datos y genera los archivos `.pkl` que usa la API:
+
+```bash
+docker-compose exec api python models/train_models.py
+```
+
+> **Nota:** El archivo de datos originales (`data/raw/DTF_s_DATA_CORRECT.xlsx`) no está en el repositorio. Colócalo en esa ruta antes de ejecutar el entrenamiento.
 
 ---
 
@@ -236,14 +258,8 @@ Modelo de series temporales con componente estacional semanal (s=7). Parámetros
 ### 2. Random Forest
 Ensemble de árboles de decisión que expone la importancia relativa de cada feature. Robusto frente a outliers y datos faltantes.
 
-### 3. XGBoost
-Modelo de gradient boosting real (`xgboost.XGBRegressor`) para predicción tabular de alta precisión. Mejor rendimiento individual con +46.7% de mejora sobre el baseline.
-
-### 4. Transferencia H&M (v2.0)
+### 3. Transferencia H&M (v2.0)
 Modelo puramente estadístico que no usa ML. Extrae índices estacionales normalizados del dataset H&M (31.7M transacciones), los escala al volumen DTF, y los corrige mes a mes con datos reales de la tienda. Su valor está en capturar patrones macro de la industria de moda que los modelos ML no pueden aprender con solo 54 transacciones locales.
-
-### 5. Ensemble Optimizado (v2.0)
-Combinación ponderada de los 4 modelos con pesos optimizados por grid search sobre MAE en validación. Los pesos ya no son fijos — se recalculan en cada entrenamiento.
 
 ### Iteración descartada: SARIMA + XGBoost híbrido
 Se probó usar XGBoost como corrector de residuos del SARIMA (13 features de calendario y rezagos). El MAPE empeoró de 16.27% a 23.43% porque XGBoost sobreajustó al patrón de fin de semana (`es_finde` importancia: 0.20) y amplificó un día atípico. Se descartó el enfoque híbrido. Ver `research/hm_xgboost.py`.
@@ -310,18 +326,15 @@ Los scripts de este proceso están en la carpeta `research/` y el reporte técni
 
 ## Deploy
 
-### Streamlit Cloud (gratis)
+La plataforma está containerizada con Docker Compose (tres servicios: PostgreSQL, FastAPI, Streamlit). Cualquier servidor con Docker instalado puede levantarla con `docker-compose up -d`.
 
-1. Sube el repositorio a GitHub
-2. Ve a [share.streamlit.io](https://share.streamlit.io)
-3. Conecta tu repositorio → selecciona `dashboard/app.py`
-4. Se publica automáticamente como `tu-app.streamlit.app`
+### Railway / Render (nube)
 
-### Otros servicios
+Ambas plataformas soportan despliegue directo desde Docker Compose. Configura las variables de entorno del `.env` como secrets en el panel de la plataforma.
 
-- **Railway / Render**: Agregar `Procfile` con `web: streamlit run dashboard/app.py --server.port $PORT`
-- **Docker**: Containerización pendiente como trabajo futuro
-- **Dominio propio**: Apuntar un dominio a cualquiera de estos servicios
+### Dominio propio
+
+Apunta el subdominio al servidor y usa un proxy inverso (nginx o Caddy) para exponer los puertos 8000 (API) y 8501 (dashboard).
 
 ---
 
@@ -344,13 +357,15 @@ El desarrollo sigue la metodología **APQP** (Advanced Product Quality Planning)
 | Componente | Tecnología |
 |------------|------------|
 | Lenguaje | Python 3.10+ |
+| Base de datos | PostgreSQL 16 |
+| Infraestructura | Docker, Docker Compose |
 | ETL | pandas, numpy |
-| ML | scikit-learn, XGBoost, statsmodels (SARIMAX) |
+| ML | scikit-learn, statsmodels (SARIMAX) |
 | API | FastAPI, uvicorn, pydantic |
 | Dashboard | Streamlit, Plotly |
 | Señales externas | pytrends (Google Trends) |
 | Dataset de referencia | H&M Kaggle (31.7M transacciones) |
-| Serialización | pickle, JSON |
+| Serialización | joblib, JSON |
 | Versionado | Git / GitHub |
 
 ---
@@ -361,7 +376,7 @@ El desarrollo sigue la metodología **APQP** (Advanced Product Quality Planning)
 - **MAPE** (Mean Absolute Percentage Error): error porcentual. Menor = mejor.
 - **R²** (Coeficiente de determinación): varianza explicada. Mayor = mejor (máximo 1.0).
 
-El objetivo del proyecto es una **mejora mínima del 20–25%** en MAE respecto al baseline naive. El resultado actual del mejor modelo individual es **+46.7%**.
+El objetivo del proyecto es una **mejora mínima del 20%** en MAPE respecto al baseline naive. El resultado actual del mejor modelo individual es **+38.3%** (Random Forest, MAPE 32.74%).
 
 ---
 
@@ -369,11 +384,8 @@ El objetivo del proyecto es una **mejora mínima del 20–25%** en MAE respecto 
 
 - Integración completa de **Google Trends API** como feature activo en el pipeline ETL (actualmente es placeholder).
 - **Sistema de recomendación** tipo collaborative filtering ("clientes que compraron X también compraron Y").
-- **Alertas automáticas** cuando el modelo detecta un burst inminente de demanda.
-- Migración a **PostgreSQL** cuando el volumen de datos lo justifique.
 - **MLflow** para versionado y tracking de experimentos de modelos.
-- Containerización con **Docker** para despliegue en nube.
-- **A/B testing** de pesos del ensemble con datos de producción real.
+- **Piloto de validación** de 4 semanas para medir MAPE real contra el baseline empírico.
 
 ---
 
