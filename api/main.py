@@ -444,50 +444,65 @@ def recommendations():
 @app.get("/seasonality")
 def seasonality():
     """
-    Retorna patrones de estacionalidad detectados:
-    semanal (por día) y mensual, tanto H&M como DTF.
+    Retorna patrones de estacionalidad H&M vs DTF.
+    Los índices H&M son calculados dinámicamente desde
+    hm_ventas_agregadas.csv y calibrados con datos reales de la tienda
+    (fine-tuning estadístico). Incluye metadatos de auditoría.
     """
     serie = safe_read("SELECT * FROM serie_semanal ORDER BY fecha")
     if serie.empty:
         raise HTTPException(status_code=404, detail="No hay datos de serie temporal.")
 
-    dias_nombre = {0: "Lunes", 1: "Martes", 2: "Miércoles", 3: "Jueves", 4: "Viernes", 5: "Sábado", 6: "Domingo"}
+    from models.hm_finetune import cargar_indices as _cargar_hm
+    hm_indices = _cargar_hm()
+
+    HM_INDICE_SEMANAL  = hm_indices["indice_semanal"]
+    HM_INDICE_MENSUAL  = hm_indices["indice_mensual"]
+
+    dias_nombre  = {0: "Lunes", 1: "Martes", 2: "Miércoles", 3: "Jueves",
+                    4: "Viernes", 5: "Sábado", 6: "Domingo"}
     meses_nombre = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abr", 5: "May", 6: "Jun",
                     7: "Jul", 8: "Ago", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
 
-    # Patrón semanal DTF
-    semanal_dtf = serie.groupby("dia_semana")["unidades"].mean()
-    semanal = []
-    from etl.etl_pipeline import HM_INDICE_SEMANAL
     promedio_global = serie["unidades"].mean()
-    for dia in range(7):
-        dtf_val = semanal_dtf.get(dia, 0)
-        hm_val = HM_INDICE_SEMANAL.get(dia, 1.0) * promedio_global
-        semanal.append({
-            "dia": dia,
-            "nombre": dias_nombre[dia],
-            "dtf_promedio": round(dtf_val, 2),
-            "hm_escalado": round(hm_val, 2),
-        })
 
-    # Patrón mensual DTF
-    from etl.etl_pipeline import HM_INDICE_MENSUAL
+    # Patrón semanal
+    semanal_dtf = serie.groupby("dia_semana")["unidades"].mean()
+    semanal = [
+        {
+            "dia":          dia,
+            "nombre":       dias_nombre[dia],
+            "dtf_promedio": round(float(semanal_dtf.get(dia, 0)), 2),
+            "hm_escalado":  round(HM_INDICE_SEMANAL.get(dia, 1.0) * promedio_global, 2),
+            "indice_hm":    round(HM_INDICE_SEMANAL.get(dia, 1.0), 4),
+        }
+        for dia in range(7)
+    ]
+
+    # Patrón mensual
     mensual_dtf = serie.groupby("mes")["unidades"].mean()
-    mensual = []
-    for mes in range(1, 13):
-        dtf_val = mensual_dtf.get(mes, 0)
-        hm_val = HM_INDICE_MENSUAL.get(mes, 1.0) * promedio_global
-        mensual.append({
-            "mes": mes,
-            "nombre": meses_nombre[mes],
-            "dtf_promedio": round(dtf_val, 2),
-            "hm_escalado": round(hm_val, 2),
-        })
+    mensual = [
+        {
+            "mes":          mes,
+            "nombre":       meses_nombre[mes],
+            "dtf_promedio": round(float(mensual_dtf.get(mes, 0)), 2),
+            "hm_escalado":  round(HM_INDICE_MENSUAL.get(mes, 1.0) * promedio_global, 2),
+            "indice_hm":    round(HM_INDICE_MENSUAL.get(mes, 1.0), 4),
+        }
+        for mes in range(1, 13)
+    ]
 
     return {
-        "semanal": semanal,
-        "mensual": mensual,
-        "promedio_global_diario": round(promedio_global, 2),
+        "semanal":                semanal,
+        "mensual":                mensual,
+        "promedio_global_diario": round(float(promedio_global), 2),
+        "finetune_metadata": {
+            "origen":               hm_indices.get("origen", "desconocido"),
+            "computed_at":          hm_indices.get("computed_at"),
+            "n_observaciones_dtf":  hm_indices.get("n_observaciones_dtf", 0),
+            "n_dias_hm":            hm_indices.get("n_dias_hm", 732),
+            "factor_escala":        hm_indices.get("factor_escala"),
+        },
     }
 
 

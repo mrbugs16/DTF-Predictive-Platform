@@ -393,12 +393,30 @@ h3 {{
     background: {_C["surface"]} !important;
 }}
 
-/* Selectbox / input backgrounds en modo claro */
+/* Selectbox / input backgrounds */
 [data-baseweb="select"] div,
 [data-baseweb="input"] input {{
     background: {_C["surface"]} !important;
     color: {_C["text"]} !important;
     border-color: {_C["border"]} !important;
+}}
+
+/* File uploader — dropzone y botón interior */
+[data-testid="stFileUploaderDropzone"] {{
+    background: {_C["surface"]} !important;
+    border: 1px dashed {_C["border"]} !important;
+    border-radius: 2px !important;
+}}
+[data-testid="stFileUploaderDropzone"] span,
+[data-testid="stFileUploaderDropzone"] p,
+[data-testid="stFileUploaderDropzone"] small {{
+    color: {_C["muted"]} !important;
+}}
+[data-testid="stFileUploaderDropzone"] button {{
+    background: {_C["surface"]} !important;
+    border: 1px solid {_C["border"]} !important;
+    color: {_C["text"]} !important;
+    border-radius: 1px !important;
 }}
 </style>
 """, unsafe_allow_html=True)

@@ -41,19 +41,26 @@ BANDA_INCERTIDUMBRE = 0.30  # ±30%
 MIN_DATOS_SARIMA = 14       # mínimo para SARIMA
 MIN_DATOS_RF = 30           # mínimo para Random Forest (necesita lags)
 
-# Índices H&M hardcodeados (replicados del ETL para independencia)
-HM_INDICE_SEMANAL = {
-    0: 0.94, 1: 0.89, 2: 0.91, 3: 0.95,
-    4: 1.05, 5: 1.16, 6: 1.10,
-}
-HM_INDICE_MENSUAL = {
-    1: 0.92, 2: 0.90, 3: 0.86, 4: 0.95, 5: 1.14, 6: 1.41,
-    7: 1.16, 8: 0.95, 9: 1.03, 10: 0.93, 11: 0.93, 12: 0.84,
-}
-DTF_CORRECCION_MENSUAL = {
-    1: 1.100, 2: 1.529, 3: 1.754, 4: 1.200, 5: 1.000, 6: 1.000,
-    7: 1.000, 8: 1.000, 9: 1.000, 10: 0.704, 11: 0.702, 12: 0.900,
-}
+# Índices H&M — se cargan desde data/hm_indices.json (generado por
+# hm_finetune.py en cada reentrenamiento). Si el archivo no existe
+# todavía, cargar_indices() devuelve el fallback hardcodeado original
+# para mantener compatibilidad sin necesidad de setup previo.
+from models.hm_finetune import (
+    calcular_indices_hm,
+    guardar_indices,
+    cargar_indices as _cargar_indices_hm,
+)
+
+_hm_cargado       = _cargar_indices_hm()
+HM_INDICE_SEMANAL     = _hm_cargado["indice_semanal"]
+HM_INDICE_MENSUAL     = _hm_cargado["indice_mensual"]
+DTF_CORRECCION_MENSUAL = _hm_cargado["correccion_mensual"]
+
+log.info(
+    "Índices H&M cargados — origen: %s | computed_at: %s",
+    _hm_cargado.get("origen", "?"),
+    _hm_cargado.get("computed_at", "no disponible"),
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -693,6 +700,28 @@ def ejecutar_entrenamiento() -> dict:
 
     log.info(f"  → {len(df_serie)} días de datos")
     log.info(f"  → {serie.sum():.0f} unidades totales")
+
+    # ── 1b. Fine-tuning H&M — recalcular índices con datos actualizados ──
+    # Actualiza los globals del módulo para que TODOS los modelos usen
+    # los índices frescos en este ciclo de entrenamiento.
+    global HM_INDICE_SEMANAL, HM_INDICE_MENSUAL, DTF_CORRECCION_MENSUAL
+    try:
+        nuevos_indices = calcular_indices_hm(df_serie)
+        guardar_indices(nuevos_indices)
+        HM_INDICE_SEMANAL      = nuevos_indices["indice_semanal"]
+        HM_INDICE_MENSUAL      = nuevos_indices["indice_mensual"]
+        DTF_CORRECCION_MENSUAL = nuevos_indices["correccion_mensual"]
+        log.info(
+            "Fine-tuning H&M completado — origen: %s | obs_dtf: %d | "
+            "factor_escala: %.8f",
+            nuevos_indices["origen"],
+            nuevos_indices["n_observaciones_dtf"],
+            nuevos_indices["factor_escala"],
+        )
+    except Exception as exc:
+        log.warning(
+            "Fine-tuning H&M falló (%s) — continuando con índices previos", exc
+        )
 
     # ── 2. Baseline naive ──
     baseline = calcular_baseline_naive(serie, HORIZONTE_DIAS)

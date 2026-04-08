@@ -41,3 +41,8 @@ models/saved/*.pkl
 # Temporary files
 tmp/
 temp/
+
+# Runtime data (generados automáticamente, no versionar)
+data/hm_indices.json
+data/VENTAS_ST.xlsx
+data/*.xlsx
