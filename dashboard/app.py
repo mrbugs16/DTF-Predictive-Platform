@@ -1,8 +1,16 @@
 """
-Dashboard v5.0 — DTF Fashion
+Dashboard v5.1 — DTF Fashion
 Diseño fashion, lenguaje para administrador de marca.
 Tabs: Demanda Estimada · Precisión del Análisis · Plan de Producción
-      Tendencias de Mercado · Historial de Ventas · Avisos del Sistema
+      Tendencias de Mercado · Historial de Ventas · Analizador de Diseños
+      · Avisos del Sistema
+
+Cambios v5.0 → v5.1:
+  • Fix crítico: eliminado el bloque `with tab6:` duplicado que colapsaba
+    "Analizador de Diseños" y "Avisos del Sistema" en la misma pestaña.
+  • 7 tabs correctamente estructuradas (antes 6 con bug).
+  • Import de render_design_analyzer_tab movido después de sys.path.insert
+    para evitar ImportError cuando se ejecuta desde rutas no estándar.
 """
 
 import os
@@ -18,8 +26,10 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 
+# ── IMPORTANTE: sys.path.insert DEBE ir antes de imports del proyecto ──
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from database.connection import read_sql, engine
+from dashboard.tab_design_analyzer import render_design_analyzer_tab
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("dashboard")
@@ -52,19 +62,18 @@ ES_OSCURO = st.session_state.tema == "dark"
 
 if ES_OSCURO:
     COLORS = {
-        "gold":        "#C2A87A",
+        "gold":        "#C2A87A",   # ← color primario (se usaría aquí el nuevo)
         "gold_dim":    "rgba(194,168,122,0.15)",
-        "teal":        "#4E9E8A",
+        "teal":        "#4E9E8A",   # ← color éxito / acento
         "teal_dim":    "rgba(78,158,138,0.15)",
-        "amber":       "#C4936A",
-        "red":         "#B05C5C",
-        "surface":     "#16161E",
-        "border":      "#2A2A38",
-        "text":        "#E8E4DC",
-        "muted":       "#8A8898",
+        "amber":       "#C4936A",   # ← color advertencia
+        "red":         "#B05C5C",   # ← color error
+        "surface":     "#16161E",   # ← ≈ silent-a0 (más oscuro)
+        "border":      "#2A2A38",   # ← ≈ silent-a10
+        "text":        "#E8E4DC",   # ← color de texto principal
+        "muted":       "#8A8898",   # ← ≈ silent-a20 (texto muted)
         "banda":       "rgba(194,168,122,0.12)",
-        # internos CSS
-        "_bg":         "#0C0C10",
+        "_bg":         "#0C0C10",   # ← fondo global (más oscuro que surface)
         "_sidebar":    "#0F0F14",
         "_plot":       "rgba(22,22,30,0.6)",
         "_h2":         "#C2A87A",
@@ -606,7 +615,7 @@ with st.sidebar:
     st.divider()
     st.markdown(
         f'<span style="font-size:0.68rem;color:{COLORS["muted"]};">'
-        'v5.0 — Proyecto de titulacion Ibero 2026<br>'
+        'v5.1 — Proyecto de titulacion Ibero 2026<br>'
         'Modelos: SARIMA · Prophet · Random Forest'
         '</span>',
         unsafe_allow_html=True,
@@ -614,16 +623,17 @@ with st.sidebar:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TABS
+# TABS — 7 pestañas v5.1
 # ─────────────────────────────────────────────────────────────────────────────
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "Demanda Estimada",
-    "Precisión del Análisis",
-    "Plan de Producción",
-    "Tendencias de Mercado",
-    "Historial de Ventas",
-    "Avisos del Sistema",
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "📈 Demanda Estimada",
+    "🏆 Precisión del Análisis",
+    "🏭 Plan de Producción",
+    "🔍 Tendencias de Mercado",
+    "📊 Historial de Ventas",
+    "🎨 Analizador de Diseños",
+    "🔔 Avisos del Sistema",
 ])
 
 
@@ -1107,12 +1117,12 @@ with tab3:
             )
 
             if cat_top:
-                cat_ing = ventas.groupby("categoria")["ingreso_bruto"].sum().idxmax()
+                cat_ing_lider = ventas.groupby("categoria")["ingreso_bruto"].sum().idxmax()
                 st.markdown(
                     f'<div class="alerta-box">'
                     f'<span class="alerta-titulo">Categorías clave</span>'
                     f'La categoría <strong>{cat_top}</strong> lidera en volumen de piezas vendidas '
-                    f'y <strong>{cat_ing}</strong> lidera en ingresos. '
+                    f'y <strong>{cat_ing_lider}</strong> lidera en ingresos. '
                     f'Prioriza stock e insumos DTF para estas categorías.'
                     f'</div>',
                     unsafe_allow_html=True,
@@ -1219,7 +1229,6 @@ with tab4:
                 st.error("pytrends no esta instalado.")
             except Exception as e:
                 st.error(f"Error al consultar Google Trends: {e}")
-
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1330,10 +1339,18 @@ with tab5:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# TAB 6 — AVISOS DEL SISTEMA
+# TAB 6 — ANALIZADOR DE DISEÑOS
 # ═════════════════════════════════════════════════════════════════════════════
 
 with tab6:
+    render_design_analyzer_tab(API_URL, COLORS)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TAB 7 — AVISOS DEL SISTEMA
+# ═════════════════════════════════════════════════════════════════════════════
+
+with tab7:
     st.header("Avisos del Sistema")
     st.markdown(timestamp_label("Estado verificado"), unsafe_allow_html=True)
 

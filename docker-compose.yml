@@ -1,6 +1,3 @@
-# ============================================================================
-# DTF Predictive Platform — Docker Compose
-# ============================================================================
 # Levanta 3 servicios: PostgreSQL, FastAPI (API), Streamlit (Dashboard)
 #
 # Uso:
@@ -10,9 +7,6 @@
 #   docker-compose down           # Detener todo
 #   docker-compose down -v        # Detener + borrar volúmenes (reset DB)
 # ============================================================================
-
-version: "3.9"
-
 services:
   # ── PostgreSQL ──
   db:
@@ -45,8 +39,12 @@ services:
     ports:
       - "${API_PORT:-8000}:8000"
     environment:
+      # Conexión a DB usando el nombre del servicio 'db' (no localhost)
       DATABASE_URL: postgresql://${POSTGRES_USER:-dtf_user}:${POSTGRES_PASSWORD:-dtf_secret_2026}@db:5432/${POSTGRES_DB:-dtf_platform}
       PYTHONUNBUFFERED: 1
+      # Variables de OpenAI (ahora sí se pasan)
+      VISION_PROVIDER: ${VISION_PROVIDER}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
     volumes:
       - .:/app
       - uploads:/app/data/uploads
@@ -68,6 +66,9 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-dtf_user}:${POSTGRES_PASSWORD:-dtf_secret_2026}@db:5432/${POSTGRES_DB:-dtf_platform}
       API_URL: http://api:8000
       PYTHONUNBUFFERED: 1
+      # Variables de OpenAI (si el dashboard las necesita)
+      VISION_PROVIDER: ${VISION_PROVIDER}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
     volumes:
       - .:/app
       - uploads:/app/data/uploads
