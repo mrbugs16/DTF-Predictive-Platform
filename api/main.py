@@ -12,6 +12,7 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
+from api.routes_design import router as design_router
 
 import numpy as np
 import pandas as pd
@@ -21,6 +22,9 @@ from fastapi.responses import JSONResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from database.connection import read_sql, engine
+
+#from api.routes_image import router as image_router
+#app.include_router(image_router)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("api")
@@ -70,6 +74,7 @@ def df_to_records(df: pd.DataFrame) -> list:
 # ═══════════════════════════════════════════════════════════════════════════
 # ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════════════
+app.include_router(design_router)
 
 @app.get("/")
 def root():

@@ -1,4 +1,4 @@
-# DTF Predictive Platform — Dependencies
+# Dependencies
 # Python 3.11+
 
 # ── Data Processing ──
@@ -33,3 +33,6 @@ pytrends>=4.9.0
 python-dateutil>=2.8.0
 requests>=2.31.0
 python-dotenv>=1.0.0
+
+# - OPENAI - 
+openai>=1.0.0
