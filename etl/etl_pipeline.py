@@ -209,6 +209,27 @@ def detectar_columnas(df: pd.DataFrame) -> dict:
 # 2. LIMPIEZA
 # ═══════════════════════════════════════════════════════════════════════════
 
+_MESES_ES = {
+    "enero": "January",   "febrero": "February", "marzo": "March",
+    "abril": "April",     "mayo": "May",          "junio": "June",
+    "julio": "July",      "agosto": "August",     "septiembre": "September",
+    "octubre": "October", "noviembre": "November","diciembre": "December",
+}
+
+def _parsear_fechas_espanol(serie: pd.Series) -> pd.Series:
+    """
+    Traduce meses en español a inglés antes de parsear.
+    Maneja formatos como '07 de octubre 2025' o '31 de octubre de 2025'.
+    """
+    s = serie.astype(str).str.lower().str.strip()
+    for es, en in _MESES_ES.items():
+        s = s.str.replace(es, en, case=False, regex=False)
+    # Eliminar la(s) partícula(s) "de" que quedan sueltas: "07 de October de 2025"
+    s = s.str.replace(r"\bde\b", "", regex=True)
+    s = s.str.replace(r"\s+", " ", regex=True).str.strip()
+    return pd.to_datetime(s, errors="coerce", dayfirst=True)
+
+
 def limpiar_datos(df: pd.DataFrame, mapeo: dict) -> pd.DataFrame:
     """Limpia y valida los datos crudos."""
     log.info("Limpiando datos...")
@@ -222,8 +243,17 @@ def limpiar_datos(df: pd.DataFrame, mapeo: dict) -> pd.DataFrame:
     # Intentar parseo directo
     df["fecha"] = pd.to_datetime(df[col_fecha], errors="coerce", dayfirst=True)
 
-    # Si falló (muchos NaT), intentar como serial date de Excel (ej: 45930 = 2025-10-06)
+    # Si falló, intentar con traducción de meses en español
+    # (ej: "07 de octubre 2025" → "07 October 2025")
     nulos = df["fecha"].isna().sum()
+    if nulos > len(df) * 0.3:
+        parsed_es = _parsear_fechas_espanol(df[col_fecha])
+        if parsed_es.notna().sum() > df["fecha"].notna().sum():
+            df["fecha"] = parsed_es
+            log.info(f"  → {parsed_es.notna().sum()} fechas parseadas con meses en español")
+            nulos = df["fecha"].isna().sum()
+
+    # Si falló (muchos NaT), intentar como serial date de Excel (ej: 45930 = 2025-10-06)
     if nulos > len(df) * 0.5:
         log.warning(f"  → {nulos} fechas no parseadas, intentando como serial Excel...")
         vals = pd.to_numeric(df[col_fecha], errors="coerce")
@@ -315,8 +345,15 @@ def agregar_serie_semanal(df: pd.DataFrame) -> pd.DataFrame:
     """Agrega ventas diarias y rellena días sin actividad."""
     log.info("Generando serie temporal diaria...")
 
-    fecha_min = df["fecha"].min().normalize()
-    fecha_max = df["fecha"].max().normalize()
+    _fmin = df["fecha"].min()
+    _fmax = df["fecha"].max()
+    if pd.isna(_fmin) or pd.isna(_fmax):
+        raise ValueError(
+            "No se encontraron fechas válidas tras la limpieza. "
+            "Verifica que el archivo tenga una columna 'fecha' con fechas legibles."
+        )
+    fecha_min = _fmin.normalize()
+    fecha_max = _fmax.normalize()
 
     # Crear rango completo de fechas
     rango = pd.date_range(start=fecha_min, end=fecha_max, freq="D")

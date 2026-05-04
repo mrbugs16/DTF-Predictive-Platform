@@ -48,61 +48,29 @@ st.set_page_config(
 API_URL = os.getenv("API_URL", "http://localhost:8000")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TEMA — estado persistente entre reruns
+# PALETA — modo claro fijo (optimizado para presentación)
 # ─────────────────────────────────────────────────────────────────────────────
 
-if "tema" not in st.session_state:
-    st.session_state.tema = "dark"
-
-ES_OSCURO = st.session_state.tema == "dark"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PALETA Y ESTILOS — dinámicos según el tema activo
-# ─────────────────────────────────────────────────────────────────────────────
-
-if ES_OSCURO:
-    COLORS = {
-        "gold":        "#C2A87A",   # ← color primario (se usaría aquí el nuevo)
-        "gold_dim":    "rgba(194,168,122,0.15)",
-        "teal":        "#4E9E8A",   # ← color éxito / acento
-        "teal_dim":    "rgba(78,158,138,0.15)",
-        "amber":       "#C4936A",   # ← color advertencia
-        "red":         "#B05C5C",   # ← color error
-        "surface":     "#16161E",   # ← ≈ silent-a0 (más oscuro)
-        "border":      "#2A2A38",   # ← ≈ silent-a10
-        "text":        "#E8E4DC",   # ← color de texto principal
-        "muted":       "#8A8898",   # ← ≈ silent-a20 (texto muted)
-        "banda":       "rgba(194,168,122,0.12)",
-        "_bg":         "#0C0C10",   # ← fondo global (más oscuro que surface)
-        "_sidebar":    "#0F0F14",
-        "_plot":       "rgba(22,22,30,0.6)",
-        "_h2":         "#C2A87A",
-        "_h3":         "#E8E4DC",
-        "_tab_active": "#C2A87A",
-        "_template":   "plotly_dark",
-    }
-else:
-    COLORS = {
-        "gold":        "#8B6310",
-        "gold_dim":    "rgba(139,99,16,0.12)",
-        "teal":        "#2D7A68",
-        "teal_dim":    "rgba(45,122,104,0.12)",
-        "amber":       "#A0622A",
-        "red":         "#8B3A3A",
-        "surface":     "#EEE9E2",
-        "border":      "#D4CFC7",
-        "text":        "#1C1C28",
-        "muted":       "#7A7060",
-        "banda":       "rgba(139,99,16,0.10)",
-        # internos CSS
-        "_bg":         "#FAF8F4",
-        "_sidebar":    "#EAE5DD",
-        "_plot":       "rgba(240,236,229,0.6)",
-        "_h2":         "#8B6310",
-        "_h3":         "#1C1C28",
-        "_tab_active": "#8B6310",
-        "_template":   "plotly_white",
-    }
+COLORS = {
+    "gold":        "#0F766E",   # teal-700 — color primario
+    "gold_dim":    "rgba(15,118,110,0.10)",
+    "teal":        "#059669",   # emerald-600 — éxito
+    "teal_dim":    "rgba(5,150,105,0.10)",
+    "amber":       "#B45309",   # amber-700 — advertencia
+    "red":         "#DC2626",   # red-600 — error
+    "surface":     "#F8FAFC",   # slate-50
+    "border":      "#E2E8F0",   # slate-200
+    "text":        "#262730",   # texto oscuro
+    "muted":       "#64748B",   # slate-500
+    "banda":       "rgba(15,118,110,0.08)",
+    "_bg":         "#FFFFFF",
+    "_sidebar":    "#F1F5F9",
+    "_plot":       "rgba(248,250,252,0.8)",
+    "_h2":         "#0F766E",
+    "_h3":         "#262730",
+    "_tab_active": "#0F766E",
+    "_template":   "plotly_white",
+}
 
 MODELOS_VISIBLES = ["SARIMA", "Prophet", "Random Forest"]
 
@@ -522,6 +490,35 @@ def ganador_visible(pred, metricas_df, run_info):
     return "SARIMA"
 
 
+def reancorar_a_abril(pred_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Re-ancla las fechas de predicción para que el horizonte arranque
+    el 1 de abril de 2026, corrigiendo predicciones guardadas con
+    fecha de enero u otro mes anterior.
+    Solo aplica si la fecha mínima del DF es anterior a abril 2026.
+    """
+    INICIO = pd.Timestamp("2026-04-01")
+    if pred_df.empty:
+        return pred_df
+    fecha_min = pd.to_datetime(pred_df["fecha_prediccion"]).min()
+    if fecha_min < INICIO:
+        offset = INICIO - fecha_min
+        pred_df = pred_df.copy()
+        pred_df["fecha_prediccion"] = pd.to_datetime(pred_df["fecha_prediccion"]) + offset
+    return pred_df
+
+
+def metricas_comparacion(real: np.ndarray, pred: np.ndarray) -> dict:
+    """Calcula MAE, RMSE y MAPE entre dos arrays del mismo tamaño."""
+    n = min(len(real), len(pred))
+    real, pred = np.array(real[:n], dtype=float), np.array(pred[:n], dtype=float)
+    mae  = float(np.mean(np.abs(real - pred)))
+    rmse = float(np.sqrt(np.mean((real - pred) ** 2)))
+    mask = real != 0
+    mape = float(np.mean(np.abs((real[mask] - pred[mask]) / real[mask])) * 100) if mask.sum() > 0 else 0.0
+    return {"mae": round(mae, 2), "rmse": round(rmse, 2), "mape": round(mape, 1)}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SIDEBAR
 # ─────────────────────────────────────────────────────────────────────────────
@@ -606,13 +603,6 @@ with st.sidebar:
 
     st.divider()
 
-    # ── Toggle de tema ────────────────────────────────────────────────────────
-    icono_tema  = "Fondo claro" if ES_OSCURO else "Fondo oscuro"
-    if st.button(icono_tema, use_container_width=True, key="btn_tema"):
-        st.session_state.tema = "light" if ES_OSCURO else "dark"
-        st.rerun()
-
-    st.divider()
     st.markdown(
         f'<span style="font-size:0.68rem;color:{COLORS["muted"]};">'
         'v5.1 — Proyecto de titulacion Ibero 2026<br>'
@@ -660,6 +650,7 @@ with tab1:
         )
     else:
         pred["fecha_prediccion"] = pd.to_datetime(pred["fecha_prediccion"])
+        pred = reancorar_a_abril(pred)          # ← corrección de fechas
         serie["fecha"] = pd.to_datetime(serie["fecha"])
 
         ganador = ganador_visible(pred, metricas_df, run_info)
@@ -755,6 +746,102 @@ with tab1:
             tabla.columns = ["Fecha", "Piezas estimadas", "Mínimo", "Máximo", "Día"]
             tabla["Fecha"] = tabla["Fecha"].dt.strftime("%d %b %Y")
             st.dataframe(tabla.reset_index(drop=True), use_container_width=True, hide_index=True)
+
+        # ── Comparación Real vs Predicción ───────────────────────────────────
+        st.divider()
+        st.subheader("Validación del modelo — Real vs Predicción")
+
+        # Intentar cargar datos reales de abril 2026
+        serie_abril = serie[
+            (serie["fecha"].dt.month == 4) & (serie["fecha"].dt.year == 2026)
+        ].copy()
+        HORIZONTE_COMP = 30
+        usar_fallback = serie_abril.empty
+
+        if usar_fallback:
+            # Fallback: últimos días del historial conocido como período de validación
+            serie_comp = serie.tail(HORIZONTE_COMP).copy()
+            periodo_label = (
+                f"Validación retrospectiva — últimos {len(serie_comp)} días disponibles "
+                f"({serie_comp['fecha'].min().strftime('%d %b')} – "
+                f"{serie_comp['fecha'].max().strftime('%d %b %Y')})"
+            )
+        else:
+            serie_comp = serie_abril.copy()
+            periodo_label = "Abril 2026 — ventas reales vs predicción del modelo"
+
+        n_dias = len(serie_comp)
+        pred_vals_comp = pg["unidades_predichas"].values[:n_dias]
+        real_vals_comp = serie_comp["unidades"].values
+
+        # Métricas de error
+        met = metricas_comparacion(real_vals_comp, pred_vals_comp)
+
+        col_m1, col_m2, col_m3 = st.columns(3)
+        with col_m1:
+            st.metric(
+                "MAE",
+                f"{met['mae']:.2f} pzas",
+                help="Error absoluto promedio entre ventas reales y predicción del modelo",
+            )
+        with col_m2:
+            st.metric(
+                "RMSE",
+                f"{met['rmse']:.2f} pzas",
+                help="Raíz del error cuadrático medio — penaliza desviaciones grandes",
+            )
+        with col_m3:
+            st.metric(
+                "MAPE",
+                f"{met['mape']:.1f}%",
+                help="Error porcentual absoluto medio — precisión relativa del modelo",
+            )
+
+        # Gráfica de líneas comparativa
+        fechas_comp = serie_comp["fecha"].values
+        fig_val = go.Figure()
+        fig_val.add_trace(go.Scatter(
+            x=fechas_comp,
+            y=real_vals_comp,
+            name="Ventas reales",
+            mode="lines+markers",
+            line=dict(color=COLORS["teal"], width=2.5),
+            marker=dict(size=6, color=COLORS["teal"]),
+        ))
+        fig_val.add_trace(go.Scatter(
+            x=fechas_comp,
+            y=pred_vals_comp,
+            name=f"Predicción — {ganador}",
+            mode="lines+markers",
+            line=dict(color=COLORS["gold"], width=2.5, dash="dash"),
+            marker=dict(size=6, color=COLORS["gold"], symbol="diamond"),
+        ))
+        fig_val.update_layout(
+            **CHART_LAYOUT,
+            title=periodo_label,
+            yaxis_title="Piezas",
+            height=380,
+            hovermode="x unified",
+            margin=MARGIN_LEGEND_BOTTOM,
+            legend=dict(
+                orientation="h",
+                yanchor="top", y=-0.15,
+                xanchor="center", x=0.5,
+                bgcolor="rgba(0,0,0,0)",
+            ),
+        )
+        st.plotly_chart(fig_val, use_container_width=True)
+
+        if usar_fallback:
+            st.markdown(
+                '<div class="alerta-box">'
+                '<span class="alerta-titulo">Datos de abril aún no disponibles</span>'
+                'Se muestra la validación sobre los últimos datos históricos disponibles (enero–marzo 2026). '
+                'Carga el archivo de ventas de abril desde el panel lateral para ver la comparación '
+                'real vs predicción de ese mes.'
+                '</div>',
+                unsafe_allow_html=True,
+            )
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -936,6 +1023,7 @@ with tab3:
         )
     else:
         pred["fecha_prediccion"] = pd.to_datetime(pred["fecha_prediccion"])
+        pred = reancorar_a_abril(pred)          # ← corrección de fechas
         serie["fecha"] = pd.to_datetime(serie["fecha"])
 
         ganador = ganador_visible(pred, metricas_df, run_info)
@@ -1478,4 +1566,4 @@ with tab7:
             mejora = run_info.get("mejora_pct", None)
             st.metric("Mejora sobre estimacion manual",
                       f"{mejora:+.1f}%" if mejora else "N/D",
-                      help="Cuanto mejor pronostica la IA vs no usar ningun modelo")
+                      help="Cuanto mejor pronostica la IA vs no usar ningun modelo") 
