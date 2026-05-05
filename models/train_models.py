@@ -266,12 +266,20 @@ def entrenar_prophet(df_serie: pd.DataFrame, horizonte: int = HORIZONTE_DIAS) ->
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# MODELO 3: RANDOM FOREST
+# MODELO 3: RANDOM FOREST  (v4.2 — FIX evaluación recursiva)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def entrenar_random_forest(df_features: pd.DataFrame, horizonte: int = HORIZONTE_DIAS) -> dict:
     """
     Entrena Random Forest con los features del ETL.
+
+    CAMBIO v4.2: La evaluación del test set ahora es RECURSIVA — RF predice
+    el día t+1 sin ver y_t real, alimentando sus propias predicciones a los
+    lags posteriores. Esto pone a RF en igualdad de condiciones con SARIMA
+    y Prophet, que también predicen 30 días al futuro sin ver el test set.
+
+    Antes (bug v4.1): predict(X_test) usaba lags reales del test, dándole a
+    RF información que SARIMA/Prophet no tenían → RF ganaba siempre.
     """
     log.info("─── Entrenando Random Forest ───")
     from sklearn.ensemble import RandomForestRegressor
@@ -292,7 +300,6 @@ def entrenar_random_forest(df_features: pd.DataFrame, horizonte: int = HORIZONTE
         "dia_sin", "dia_cos", "mes_sin", "mes_cos",
         "dias_desde_inicio", "tendencia_norm",
     ]
-    # Usar solo las que existen
     feature_cols = [c for c in feature_cols if c in df_features.columns]
     target = "unidades"
 
@@ -306,7 +313,6 @@ def entrenar_random_forest(df_features: pd.DataFrame, horizonte: int = HORIZONTE
 
     X_train = train_df[feature_cols].values
     y_train = train_df[target].values
-    X_test = test_df[feature_cols].values
     y_test = test_df[target].values
 
     try:
@@ -320,20 +326,36 @@ def entrenar_random_forest(df_features: pd.DataFrame, horizonte: int = HORIZONTE
         )
         modelo.fit(X_train, y_train)
 
-        pred_test = modelo.predict(X_test)
+        # ───────── EVALUACIÓN RECURSIVA (FIX v4.2) ─────────
+        # Predecir el test set día a día, alimentando las predicciones
+        # previas a los lags. RF NO ve los valores reales del test.
+        pred_test = _generar_forecast_rf(
+            modelo, train_df, feature_cols, horizonte=test_size
+        )
         pred_test = np.maximum(pred_test, 0)
+        # ───────────────────────────────────────────────────
 
         metricas = calcular_metricas(y_test, pred_test)
 
-        # Feature importance
+        # Feature importance (sobre el modelo entrenado, no cambia)
         importancias = dict(zip(feature_cols, modelo.feature_importances_))
         top_features = sorted(importancias.items(), key=lambda x: x[1], reverse=True)[:5]
 
-        # Forecast futuro: generar features sintéticos
-        forecast = _generar_forecast_rf(modelo, df_ml, feature_cols, horizonte)
+        # Reentrenar con TODA la serie y forecast a 30 días futuros reales
+        modelo_full = RandomForestRegressor(
+            n_estimators=200,
+            max_depth=6,
+            min_samples_split=5,
+            min_samples_leaf=3,
+            random_state=42,
+            n_jobs=-1,
+        )
+        modelo_full.fit(df_ml[feature_cols].values, df_ml[target].values)
+        forecast = _generar_forecast_rf(modelo_full, df_ml, feature_cols, horizonte)
 
         log.info(f"  → MAE: {metricas['mae']:.2f} | MAPE: {metricas['mape']:.1f}% | R²: {metricas['r2']:.3f}")
         log.info(f"  → Top features: {[f'{k}: {v:.3f}' for k, v in top_features]}")
+        log.info(f"  → Evaluación: recursiva (sin leakage)")
 
         return {
             "status": "ok",
@@ -342,7 +364,7 @@ def entrenar_random_forest(df_features: pd.DataFrame, horizonte: int = HORIZONTE
             "forecast": forecast,
             "pred_test": pred_test,
             "test_real": y_test,
-            "parametros": "n_est=200, max_d=6, min_split=5",
+            "parametros": "n_est=200, max_d=6, min_split=5, eval=recursiva",
             "importancia_features": importancias,
         }
 
@@ -350,11 +372,16 @@ def entrenar_random_forest(df_features: pd.DataFrame, horizonte: int = HORIZONTE
         log.error(f"  → Error Random Forest: {e}")
         return {"status": "error", "razon": str(e)}
 
-
 def _generar_forecast_rf(
     modelo, df_hist: pd.DataFrame, feature_cols: list, horizonte: int
 ) -> np.ndarray:
-    """Genera forecast iterativo con Random Forest (autoregresivo)."""
+    """
+    Genera forecast iterativo con Random Forest (autoregresivo).
+
+    Predice día a día, alimentando cada predicción a los lags de la
+    siguiente iteración. Esto evita data leakage y pone a RF en
+    igualdad de condiciones con SARIMA y Prophet.
+    """
     ultimo_dia = pd.to_datetime(df_hist["fecha"].max())
     serie_extendida = df_hist[["fecha", "unidades"]].copy()
     predicciones = []
@@ -364,15 +391,15 @@ def _generar_forecast_rf(
         dia_semana = nueva_fecha.dayofweek
         mes = nueva_fecha.month
 
-        # Construir fila de features
         unidades_hist = serie_extendida["unidades"].values
         fila = {}
 
+        # Calendario
         fila["dia_semana"] = dia_semana
         fila["es_fin_semana"] = 1 if dia_semana in [5, 6] else 0
         fila["mes"] = mes
 
-        # Lags (usando serie extendida con predicciones previas)
+        # Lags
         for lag in [1, 7, 14, 21, 28]:
             idx = len(unidades_hist) - lag
             fila[f"lag_{lag}"] = unidades_hist[idx] if idx >= 0 else 0
@@ -394,9 +421,10 @@ def _generar_forecast_rf(
         else:
             fila["cambio_semanal_pct"] = 0
 
+        # Momentum
         fila["momentum_7d"] = (unidades_hist[-1] - unidades_hist[-7]) if len(unidades_hist) >= 7 else 0
 
-        # H&M
+        # Índices H&M
         fila["hm_indice_semanal"] = HM_INDICE_SEMANAL.get(dia_semana, 1.0)
         fila["hm_indice_mensual"] = HM_INDICE_MENSUAL.get(mes, 1.0)
         fila["hm_indice_combinado"] = (
@@ -421,7 +449,7 @@ def _generar_forecast_rf(
         pred = max(0, modelo.predict(X_new)[0])
         predicciones.append(pred)
 
-        # Agregar a serie extendida
+        # Agregar predicción a serie extendida (para alimentar lags siguientes)
         nueva_fila = pd.DataFrame({"fecha": [nueva_fecha], "unidades": [pred]})
         serie_extendida = pd.concat([serie_extendida, nueva_fila], ignore_index=True)
 
